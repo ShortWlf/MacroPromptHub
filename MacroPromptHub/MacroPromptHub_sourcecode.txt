@@ -1,0 +1,891 @@
+namespace MacroPromptHub
+{
+    partial class Form1
+    {
+        /// <summary>
+        /// Required designer variable.
+        /// </summary>
+        private System.ComponentModel.IContainer components = null;
+
+        /// <summary>
+        /// Clean up any resources being used.
+        /// </summary>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (components != null))
+            {
+                components.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        #region Windows Form Designer generated code
+
+        /// <summary>
+        /// Required method for Designer support - do not modify
+        /// the contents of this method with the code editor.
+        /// </summary>
+        private void InitializeComponent()
+        {
+			this.menuStrip1 = new System.Windows.Forms.MenuStrip();
+			this.flowLayoutPanel1 = new System.Windows.Forms.FlowLayoutPanel();
+			this.SuspendLayout();
+			// 
+			// menuStrip1
+			// 
+			this.menuStrip1.Location = new System.Drawing.Point(0, 0);
+			this.menuStrip1.Name = "menuStrip1";
+			this.menuStrip1.Size = new System.Drawing.Size(239, 24);
+			this.menuStrip1.TabIndex = 0;
+			this.menuStrip1.Text = "menuStrip1";
+			// 
+			// flowLayoutPanel1
+			// 
+			this.flowLayoutPanel1.AutoScroll = true;
+			this.flowLayoutPanel1.Dock = System.Windows.Forms.DockStyle.Fill;
+			this.flowLayoutPanel1.Location = new System.Drawing.Point(0, 24);
+			this.flowLayoutPanel1.Name = "flowLayoutPanel1";
+			this.flowLayoutPanel1.Size = new System.Drawing.Size(239, 508);
+			this.flowLayoutPanel1.TabIndex = 1;
+			// 
+			// Form1
+			// 
+			this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
+			this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+			this.ClientSize = new System.Drawing.Size(239, 532);
+			this.Controls.Add(this.flowLayoutPanel1);
+			this.Controls.Add(this.menuStrip1);
+			this.MainMenuStrip = this.menuStrip1;
+			this.Name = "Form1";
+			this.Text = "Macro Prompt Hub";
+			this.ResumeLayout(false);
+			this.PerformLayout();
+
+        }
+
+        #endregion
+
+        private System.Windows.Forms.MenuStrip menuStrip1;
+        private System.Windows.Forms.FlowLayoutPanel flowLayoutPanel1;
+    }
+}
+
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Win32;
+
+namespace MacroPromptHub
+{
+    public partial class Form1 : Form
+    {
+        private readonly string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "prompts.txt");
+        private bool startWithWindows = false;
+        private bool minimizeToTray = true;
+        private bool stayOnTop = false;
+        private NotifyIcon trayIcon;
+        private ContextMenuStrip trayMenu;
+        private Dictionary<int, string> hotkeyMap = new Dictionary<int, string>();
+        private int hotkeyCounter = 1000;
+        private bool hotkeyAssignMode = false;
+        private Button currentHoverButton = null;
+        private IntPtr lastBrowserHandle = IntPtr.Zero;
+        private string lastBrowserUrl = "";
+
+        public Form1()
+        {
+            InitializeComponent();
+            this.KeyPreview = true;
+            this.KeyDown += Form1_KeyDown;
+            LoadSettingsFromConfig();
+            this.TopMost = stayOnTop;
+            if (menuStrip1 != null) menuStrip1.Dock = DockStyle.Top;
+            if (flowLayoutPanel1 != null)
+            {
+                flowLayoutPanel1.Dock = DockStyle.Fill;
+                flowLayoutPanel1.AutoScroll = true;
+                flowLayoutPanel1.BringToFront();
+            }
+            SetupDynamicMenu();
+            SetupTrayIcon();
+            trayIcon.DoubleClick += (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; this.BringToFront(); this.Activate(); };
+            this.Resize += Form1_Resize;
+            this.FormClosing += Form1_FormClosing;
+            LoadMacroButtons();
+            RegisterHotkeysFromConfig();
+            if (startWithWindows) SetStartup(true);
+        }
+
+        private void ExecuteMacro(string target, string content, string command)
+        {
+            string t = target.ToLower();
+            if (t == "browser")
+            {
+                string prompt = "";
+                if (command.StartsWith("prompt:")) prompt = command.Substring("prompt:".Length).Trim();
+                ExecuteBrowserMacro(content, prompt);
+                return;
+            }
+            if (t == "focus") { ExecuteFocusMacro(content, command); return; }
+            if (t == "run") { ExecuteRunMacro(content); return; }
+            if (t == "continue") { ExecuteContinueSessionMacro(content); return; }
+            ExecuteAppMacro(target, content, command);
+        }
+
+        private void ExecuteAppMacro(string target, string content, string command)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    content = content.Replace("\\n", "\n");
+                    this.Invoke(new Action(() => Clipboard.SetText(content)));
+                    string procName = target.Replace(".exe", "").Trim().ToLowerInvariant();
+                    Process existing = Process.GetProcessesByName(procName).FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
+                    bool launchedByHub = false;
+                    Process targetProc = existing;
+                    if (targetProc == null)
+                    {
+                        if (procName == "cmd") targetProc = Process.Start("cmd.exe", "/K");
+                        else targetProc = Process.Start(procName + ".exe");
+                        launchedByHub = true;
+                    }
+                    IntPtr hwnd = WaitForMainWindow(targetProc);
+                    if (hwnd == IntPtr.Zero) return;
+                    ForceForegroundNuclear(hwnd);
+                    int focusCheck = 0;
+                    while (GetForegroundWindow() != hwnd && focusCheck < 40)
+                    {
+                        ForceForegroundNuclear(hwnd);
+                        Thread.Sleep(100);
+                        focusCheck++;
+                    }
+                    if (procName == "cmd") ForceForegroundHard(hwnd);
+                    Thread.Sleep(launchedByHub ? 1000 : 250);
+                    if (procName == "cmd") { SendKeys.SendWait("^{HOME}"); Thread.Sleep(50); }
+                    SendKeys.SendWait("^v");
+                    if (command.Contains("enter")) { Thread.Sleep(150); SendKeys.SendWait("{ENTER}"); }
+                }
+                catch (Exception ex) { this.Invoke(new Action(() => MessageBox.Show("Macro Error: " + ex.Message))); }
+            });
+        }
+
+        private void ExecuteFocusMacro(string content, string command)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    content = content.Replace("\\n", "\n");
+                    this.Invoke(new Action(() => Clipboard.SetText(content)));
+                    SendKeys.SendWait("^v");
+                    if (command.Contains("enter")) { Thread.Sleep(100); SendKeys.SendWait("{ENTER}"); }
+                }
+                catch (Exception ex) { this.Invoke(new Action(() => MessageBox.Show("Focus Macro Error: " + ex.Message))); }
+            });
+        }
+
+        private void ExecuteRunMacro(string appPath)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    string path = appPath.Trim();
+                    if (File.Exists(path) || Directory.Exists(path))
+                    {
+                        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                        return;
+                    }
+                    Process existing = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(path)).FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
+                    if (existing != null)
+                    {
+                        IntPtr hwnd = existing.MainWindowHandle;
+                        if (hwnd != IntPtr.Zero) ForceForegroundNuclear(hwnd);
+                        return;
+                    }
+                    Process.Start(path);
+                }
+                catch (Exception ex) { this.Invoke(new Action(() => MessageBox.Show("Run Macro Error: " + ex.Message))); }
+            });
+        }
+
+        private void ExecuteContinueSessionMacro(string prompt)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    prompt = prompt.Replace("\\n", "\n");
+                    Process browser = null;
+                    IntPtr hwnd = IntPtr.Zero;
+                    if (lastBrowserHandle != IntPtr.Zero && IsWindow(lastBrowserHandle))
+                    {
+                        hwnd = lastBrowserHandle;
+                        browser = Process.GetProcesses().FirstOrDefault(p => p.MainWindowHandle == hwnd);
+                    }
+                    if (browser == null)
+                    {
+                        browser = LaunchUrlAndGetBrowser("https://copilot.microsoft.com/?newchat");
+                        if (browser == null) return;
+                        hwnd = WaitForMainWindow(browser);
+                        lastBrowserHandle = hwnd;
+                        lastBrowserUrl = "https://copilot.microsoft.com/?newchat";
+                    }
+                    ForceForegroundNuclear(hwnd);
+                    int focusCheck = 0;
+                    while (GetForegroundWindow() != hwnd && focusCheck < 40)
+                    {
+                        ForceForegroundNuclear(hwnd);
+                        Thread.Sleep(100);
+                        focusCheck++;
+                    }
+                    Thread.Sleep(1500);
+                    if (!string.IsNullOrWhiteSpace(prompt))
+                    {
+                        this.Invoke(new Action(() => Clipboard.SetText(prompt)));
+                        SendKeys.SendWait("^v");
+                        Thread.Sleep(150);
+                        SendKeys.SendWait("{ENTER}");
+                    }
+                }
+                catch (Exception ex) { this.Invoke(new Action(() => MessageBox.Show("Continue Session Error: " + ex.Message))); }
+            });
+        }
+
+        private void ExecuteBrowserMacro(string url, string prompt)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    prompt = prompt.Replace("\\n", "\n");
+                    Process browser = LaunchUrlAndGetBrowser(url);
+                    if (browser == null)
+                    {
+                        this.Invoke(new Action(() => MessageBox.Show("Could not detect browser window.")));
+                        return;
+                    }
+                    IntPtr hwnd = WaitForMainWindow(browser);
+                    if (hwnd == IntPtr.Zero) return;
+                    lastBrowserHandle = hwnd;
+                    lastBrowserUrl = url;
+                    ForceForegroundNuclear(hwnd);
+                    int focusCheck = 0;
+                    while (GetForegroundWindow() != hwnd && focusCheck < 40)
+                    {
+                        ForceForegroundNuclear(hwnd);
+                        Thread.Sleep(100);
+                        focusCheck++;
+                    }
+                    Thread.Sleep(2000);
+                    if (!string.IsNullOrWhiteSpace(prompt))
+                    {
+                        this.Invoke(new Action(() => Clipboard.SetText(prompt)));
+                        SendKeys.SendWait("^v");
+                        Thread.Sleep(150);
+                        SendKeys.SendWait("{ENTER}");
+                    }
+                }
+                catch (Exception ex) { this.Invoke(new Action(() => MessageBox.Show("Browser Macro Error: " + ex.Message))); }
+            });
+        }
+
+        private Process LaunchUrlAndGetBrowser(string url)
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            string[] browsers = { "msedge", "chrome", "firefox", "brave", "opera", "vivaldi" };
+            Process found = null;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 8000)
+            {
+                foreach (var b in browsers)
+                {
+                    found = Process.GetProcessesByName(b).FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
+                    if (found != null) return found;
+                }
+                Thread.Sleep(100);
+            }
+            return null;
+        }
+
+        private IntPtr WaitForMainWindow(Process proc, int timeoutMs = 30000)
+        {
+            var sw = Stopwatch.StartNew();
+            IntPtr handle = IntPtr.Zero;
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                proc.Refresh();
+                handle = proc.MainWindowHandle;
+                if (handle != IntPtr.Zero) return handle;
+                var sameName = Process.GetProcessesByName(proc.ProcessName).FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
+                if (sameName != null) return sameName.MainWindowHandle;
+                Thread.Sleep(50);
+            }
+            return IntPtr.Zero;
+        }
+
+        private void ForceForegroundNuclear(IntPtr hWnd)
+        {
+            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+            uint targetThread = GetWindowThreadProcessId(hWnd, IntPtr.Zero);
+            uint currentThread = GetCurrentThreadId();
+            if (targetThread != currentThread)
+            {
+                AttachThreadInput(currentThread, targetThread, true);
+                SetForegroundWindow(hWnd);
+                SetFocus(hWnd);
+                AttachThreadInput(currentThread, targetThread, false);
+            }
+            else SetForegroundWindow(hWnd);
+        }
+
+        private void ForceForegroundHard(IntPtr hWnd)
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                ForceForegroundNuclear(hWnd);
+                Thread.Sleep(50);
+                SetFocus(hWnd);
+                Thread.Sleep(50);
+            }
+        }
+
+        private void RegisterHotkeysFromConfig()
+        {
+            UnregisterAllHotkeys();
+            hotkeyMap.Clear();
+            if (!File.Exists(configPath)) return;
+            var lines = File.ReadAllLines(configPath);
+            foreach (var line in lines)
+            {
+                if (!line.StartsWith("hotkey:")) continue;
+                var parts = line.Substring(7).Split('|');
+                if (parts.Length != 2) continue;
+                string hotkey = parts[0].Trim();
+                string macroName = parts[1].Trim();
+                int modifiers = 0;
+                Keys key = Keys.None;
+                if (hotkey.Contains("CTRL")) modifiers |= 0x2;
+                if (hotkey.Contains("ALT")) modifiers |= 0x1;
+                if (hotkey.Contains("SHIFT")) modifiers |= 0x4;
+                string last = hotkey.Split('+').Last();
+                key = (Keys)Enum.Parse(typeof(Keys), last);
+                int id = hotkeyCounter++;
+                RegisterHotKey(this.Handle, id, modifiers, (int)key);
+                hotkeyMap[id] = macroName;
+            }
+        }
+
+        private void UnregisterAllHotkeys()
+        {
+            foreach (var kvp in hotkeyMap.ToList()) UnregisterHotKey(this.Handle, kvp.Key);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x0312)
+            {
+                int id = m.WParam.ToInt32();
+                if (hotkeyMap.ContainsKey(id)) TriggerMacroByName(hotkeyMap[id]);
+            }
+            base.WndProc(ref m);
+        }
+
+        private void TriggerMacroByName(string name)
+        {
+            foreach (Control c in flowLayoutPanel1.Controls)
+            {
+                Button btn = c as Button;
+                if (btn != null && btn.Text == name) { btn.PerformClick(); return; }
+            }
+        }
+
+        private void Form1_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (!hotkeyAssignMode || currentHoverButton == null) return;
+            if (e.KeyCode == Keys.Escape)
+            {
+                RemoveHotkeyForButton(currentHoverButton.Text);
+                RegisterHotkeysFromConfig();
+                e.Handled = true;
+                return;
+            }
+            if (e.KeyCode == Keys.ControlKey || e.KeyCode == Keys.ShiftKey || e.KeyCode == Keys.Menu) return;
+            string hotkey = "";
+            if (e.Control) hotkey += "CTRL+";
+            if (e.Alt) hotkey += "ALT+";
+            if (e.Shift) hotkey += "SHIFT+";
+            hotkey += e.KeyCode.ToString();
+            AddOrUpdateHotkeyInConfig(hotkey, currentHoverButton.Text);
+            RegisterHotkeysFromConfig();
+            e.Handled = true;
+        }
+
+        private void AddOrUpdateHotkeyInConfig(string hotkey, string buttonName)
+        {
+            var lines = File.ReadAllLines(configPath).ToList();
+            lines.RemoveAll(l => l.StartsWith("hotkey:") && l.EndsWith("|" + buttonName));
+            lines.Add("hotkey:" + hotkey + "|" + buttonName);
+            File.WriteAllLines(configPath, lines);
+        }
+
+        private void RemoveHotkeyForButton(string buttonName)
+        {
+            var lines = File.ReadAllLines(configPath).ToList();
+            lines.RemoveAll(l => l.StartsWith("hotkey:") && l.EndsWith("|" + buttonName));
+            File.WriteAllLines(configPath, lines);
+        }
+
+        private void SetupDynamicMenu()
+        {
+            if (menuStrip1 == null) return;
+            menuStrip1.Items.Clear();
+            var fileMenu = new ToolStripMenuItem("File");
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Edit Config", null, EditConfigToolStripMenuItem_Click));
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Reset Config", null, ResetConfigToolStripMenuItem_Click));
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Reload Config", null, ReloadConfigToolStripMenuItem_Click));
+            fileMenu.DropDownItems.Add(new ToolStripSeparator());
+            fileMenu.DropDownItems.Add(new ToolStripMenuItem("Exit", null, ExitToolStripMenuItem_Click));
+            var optionsMenu = new ToolStripMenuItem("Options");
+            var startWin = new ToolStripMenuItem("Start with Windows") { Checked = startWithWindows };
+            startWin.Click += (s, e) => { startWithWindows = !startWithWindows; startWin.Checked = startWithWindows; SetStartup(startWithWindows); UpdateConfigSetting("start_with_windows", startWithWindows); };
+            var minTray = new ToolStripMenuItem("Minimize to Tray") { Checked = minimizeToTray };
+            minTray.Click += (s, e) => { minimizeToTray = !minimizeToTray; minTray.Checked = minimizeToTray; UpdateConfigSetting("minimize_to_tray", minimizeToTray); };
+            var stayTopItem = new ToolStripMenuItem("Stay on Top") { Checked = stayOnTop };
+            stayTopItem.Click += (s, e) => { stayOnTop = !stayOnTop; stayTopItem.Checked = stayOnTop; this.TopMost = stayOnTop; UpdateConfigSetting("stay_on_top", stayOnTop); };
+            var hotkeyAssignItem = new ToolStripMenuItem("Hotkey Assignment Mode") { Checked = hotkeyAssignMode };
+            hotkeyAssignItem.Click += (s, e) => { hotkeyAssignMode = !hotkeyAssignMode; hotkeyAssignItem.Checked = hotkeyAssignMode; };
+            optionsMenu.DropDownItems.Add(startWin);
+            optionsMenu.DropDownItems.Add(minTray);
+            optionsMenu.DropDownItems.Add(stayTopItem);
+            optionsMenu.DropDownItems.Add(new ToolStripSeparator());
+            optionsMenu.DropDownItems.Add(hotkeyAssignItem);
+            var platformsMenu = new ToolStripMenuItem("Platforms");
+            platformsMenu.DropDownItems.Add(new ToolStripMenuItem("Copilot", null, (s, e) => LaunchUrlAndGetBrowser("https://copilot.microsoft.com/?newchat")));
+            platformsMenu.DropDownItems.Add(new ToolStripMenuItem("Gemini", null, (s, e) => LaunchUrlAndGetBrowser("https://gemini.google.com/app")));
+            platformsMenu.DropDownItems.Add(new ToolStripMenuItem("Grok", null, (s, e) => LaunchUrlAndGetBrowser("https://grok.x.ai")));
+            platformsMenu.DropDownItems.Add(new ToolStripMenuItem("ChatGPT", null, (s, e) => LaunchUrlAndGetBrowser("https://chat.openai.com")));
+            platformsMenu.DropDownItems.Add(new ToolStripMenuItem("Midjourney", null, (s, e) => LaunchUrlAndGetBrowser("https://www.midjourney.com")));
+            menuStrip1.Items.AddRange(new ToolStripItem[] { fileMenu, optionsMenu, platformsMenu });
+        }
+
+        private void LoadSettingsFromConfig()
+        {
+            if (!File.Exists(configPath)) return;
+            try
+            {
+                var lines = File.ReadAllLines(configPath);
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("settings:start_with_windows:"))
+                        startWithWindows = line.EndsWith("true");
+                    else if (line.StartsWith("settings:minimize_to_tray:"))
+                        minimizeToTray = line.EndsWith("true");
+                    else if (line.StartsWith("settings:stay_on_top:"))
+                        stayOnTop = line.EndsWith("true");
+                }
+            }
+            catch { }
+        }
+
+        private void LoadMacroButtons()
+        {
+            if (flowLayoutPanel1 == null) return;
+            flowLayoutPanel1.Controls.Clear();
+            if (!File.Exists(configPath)) CreateDefaultConfig();
+
+            string currentTarget = "browser";
+            foreach (var line in File.ReadAllLines(configPath))
+            {
+                if (line.StartsWith("target:"))
+                {
+                    currentTarget = line.Split(':')[1].Trim();
+                }
+                else if (line.Contains("|") &&
+                         !line.StartsWith("hotkey:") &&
+                         !line.StartsWith("settings:") &&
+                         !line.TrimStart().StartsWith("#"))
+                {
+                    var p = line.Split('|');
+                    var btn = new Button
+                    {
+                        Text = p[0].Trim(),
+                        Width = 215,
+                        Height = 45,
+                        Margin = new Padding(5),
+                        FlatStyle = FlatStyle.Flat
+                    };
+                    string content = p.Length > 1 ? p[1].Trim() : "";
+                    string cmd = p.Length > 2 ? p[2].Trim() : "";
+                    string finalTarget = currentTarget;
+
+                    btn.Click += (s, e) => ExecuteMacro(finalTarget, content, cmd);
+                    btn.MouseEnter += (s, e) => currentHoverButton = btn;
+                    btn.MouseLeave += (s, e) =>
+                    {
+                        if (currentHoverButton == btn) currentHoverButton = null;
+                    };
+                    btn.MouseUp += Button_MouseUp;
+
+                    flowLayoutPanel1.Controls.Add(btn);
+                }
+            }
+
+            flowLayoutPanel1.MouseUp += FlowLayoutPanel1_MouseUp;
+        }
+
+        private void Button_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right) return;
+            Button btn = sender as Button;
+            if (btn == null) return;
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Edit Macro", null, (s, ev) => EditMacro(btn.Text));
+            menu.Items.Add("Delete Macro", null, (s, ev) => DeleteMacro(btn.Text));
+            menu.Show(Cursor.Position);
+        }
+
+        private void FlowLayoutPanel1_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right) return;
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("Add New Macro", null, (s, ev) => AddNewMacro());
+            menu.Items.Add("Reload Config", null, (s, ev) =>
+            {
+                LoadMacroButtons();
+                RegisterHotkeysFromConfig();
+            });
+            menu.Items.Add("Edit Config", null, (s, ev) => EditConfigToolStripMenuItem_Click(s, ev));
+            menu.Show(Cursor.Position);
+        }
+
+        private void DeleteMacro(string buttonName)
+        {
+            var lines = File.ReadAllLines(configPath).ToList();
+            int index = lines.FindIndex(l => l.StartsWith(buttonName + "|"));
+            if (index >= 0)
+            {
+                lines.RemoveAt(index);
+                File.WriteAllLines(configPath, lines);
+                LoadMacroButtons();
+                RegisterHotkeysFromConfig();
+            }
+        }
+
+        private void EditMacro(string buttonName)
+        {
+            var lines = File.ReadAllLines(configPath).ToList();
+            int index = lines.FindIndex(l => l.StartsWith(buttonName + "|"));
+            if (index < 0)
+            {
+                MessageBox.Show("Macro not found in config.");
+                return;
+            }
+
+            string line = lines[index];
+            string[] parts = line.Split('|');
+            string oldName = parts[0];
+            string oldContent = parts.Length > 1 ? parts[1] : "";
+            string oldCommand = parts.Length > 2 ? parts[2] : "";
+
+            string target = "browser";
+            for (int i = index - 1; i >= 0; i--)
+            {
+                if (lines[i].StartsWith("target:"))
+                {
+                    target = lines[i].Substring(7).Trim();
+                    break;
+                }
+            }
+
+            using (var dlg = new AddMacroForm())
+            {
+                dlg.SetValues(oldName, target, oldContent, oldCommand);
+
+                if (dlg.ShowDialog() != DialogResult.OK)
+                    return;
+
+                lines[index] = dlg.MacroName + "|" + dlg.Content + "|" + dlg.Command;
+                File.WriteAllLines(configPath, lines);
+
+                LoadMacroButtons();
+                RegisterHotkeysFromConfig();
+            }
+        }
+
+        private void AddNewMacro()
+        {
+            using (var dlg = new AddMacroForm())
+            {
+                if (dlg.ShowDialog() != DialogResult.OK)
+                    return;
+
+                string name = dlg.MacroName;
+                string target = dlg.Target;
+                string content = dlg.Content;
+                string command = dlg.Command;
+
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(target))
+                {
+                    MessageBox.Show("Name and target are required.");
+                    return;
+                }
+
+                var lines = File.ReadAllLines(configPath).ToList();
+                lines.Add("target:" + target);
+                lines.Add(name + "|" + content + "|" + command);
+                File.WriteAllLines(configPath, lines);
+
+                LoadMacroButtons();
+                RegisterHotkeysFromConfig();
+            }
+        }
+
+        private void CreateDefaultConfig()
+        {
+            File.WriteAllText(configPath,
+                "settings:start_with_windows:false\n" +
+                "settings:minimize_to_tray:true\n" +
+                "settings:stay_on_top:false\n\n" +
+                "# --- Hotkeys ---\n" +
+                "hotkey:CTRL+ALT+1|Notepad Hello\n" +
+                "hotkey:CTRL+ALT+2|CMD Dir\n" +
+                "hotkey:CTRL+ALT+3|Copilot Image Test\n\n" +
+                "# --- Notepad Tests ---\n" +
+                "target:notepad\n" +
+                "Notepad Hello|Hello from Macro Hub!|enter\n" +
+                "Notepad Multi-Line|Line 1\\nLine 2\\nLine 3|enter\n\n" +
+                "# --- CMD Tests ---\n" +
+                "target:cmd\n" +
+                "CMD Dir|dir|enter\n" +
+                "CMD Echo Test|echo Macro Hub Test|enter\n\n" +
+                "# --- Browser Tests (Copilot) ---\n" +
+                "target:browser\n" +
+                "Copilot Image Test|https://copilot.microsoft.com/?newchat|prompt:make an image of a neon dragon in synthwave style\n" +
+                "Copilot Text Test|https://copilot.microsoft.com/?newchat|prompt:write a short poem about retro neon cities\n\n" +
+                "# --- Continue Session ---\n" +
+                "target:continue\n" +
+                "Continue Last Session|continue the conversation\n\n" +
+                "# --- Run Apps ---\n" +
+                "target:run\n" +
+                "Launch Notepad|notepad.exe\n" +
+                "Launch CMD|cmd.exe\n\n" +
+                "# --- Focus Macros (current control) ---\n" +
+                "target:focus\n" +
+                "ComfyUI Positive|a beautiful neon dragon|enter\n" +
+                "ComfyUI Negative|low quality, blurry|enter\n"
+            );
+        }
+
+        private void SetupTrayIcon()
+        {
+            trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Visible = false, Text = "Macro Prompt Hub" };
+            trayMenu = new ContextMenuStrip();
+            trayMenu.Items.Add("Show App", null, (s, e) =>
+            {
+                this.Show();
+                this.WindowState = FormWindowState.Normal;
+            });
+            trayMenu.Items.Add("Exit", null, ExitToolStripMenuItem_Click);
+            trayIcon.ContextMenuStrip = trayMenu;
+        }
+
+        private void Form1_Resize(object sender, EventArgs e)
+        {
+            if (minimizeToTray && WindowState == FormWindowState.Minimized)
+            {
+                this.Hide();
+                trayIcon.Visible = true;
+            }
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (minimizeToTray && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                this.Hide();
+                trayIcon.Visible = true;
+            }
+            else
+            {
+                UnregisterAllHotkeys();
+            }
+        }
+
+        private void EditConfigToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            Process.Start(new ProcessStartInfo("notepad.exe", "\"" + configPath + "\"") { UseShellExecute = true });
+        }
+
+        private void ReloadConfigToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            LoadMacroButtons();
+            RegisterHotkeysFromConfig();
+        }
+
+        private void ResetConfigToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            CreateDefaultConfig();
+            LoadMacroButtons();
+            RegisterHotkeysFromConfig();
+        }
+
+        private void ExitToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            UnregisterAllHotkeys();
+            Application.Exit();
+        }
+
+        private void UpdateConfigSetting(string k, bool v)
+        {
+            try
+            {
+                var lines = File.ReadAllLines(configPath).ToList();
+                lines.RemoveAll(l => l.StartsWith("settings:" + k + ":"));
+                lines.Insert(0, "settings:" + k + ":" + v.ToString().ToLower());
+                File.WriteAllLines(configPath, lines);
+            }
+            catch { }
+        }
+
+        private void SetStartup(bool enable)
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true))
+                {
+                    if (enable) key.SetValue("MacroPromptHub", Application.ExecutablePath);
+                    else key.DeleteValue("MacroPromptHub", false);
+                }
+            }
+            catch { }
+        }
+
+        [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr ProcessId);
+        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
+        [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
+
+        private const int SW_RESTORE = 9;
+    }
+
+    public class AddMacroForm : Form
+    {
+        public string MacroName { get { return txtName.Text.Trim(); } }
+        public string Target { get { return cmbTarget.Text.Trim(); } }
+        public string Content { get { return txtContent.Text.Trim(); } }
+        public string Command { get { return txtCommand.Text.Trim(); } }
+
+        TextBox txtName = new TextBox();
+        ComboBox cmbTarget = new ComboBox();
+        TextBox txtContent = new TextBox();
+        TextBox txtCommand = new TextBox();
+        Button btnOk = new Button();
+        Button btnCancel = new Button();
+
+        public AddMacroForm()
+        {
+            this.Text = "Add / Edit Macro";
+            this.Size = new Size(400, 300);
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+
+            Label lbl1 = new Label();
+            lbl1.Text = "Button Name:";
+            lbl1.Left = 10;
+            lbl1.Top = 20;
+            lbl1.Width = 120;
+
+            txtName.Left = 140;
+            txtName.Top = 20;
+            txtName.Width = 220;
+
+            Label lbl2 = new Label();
+            lbl2.Text = "Target:";
+            lbl2.Left = 10;
+            lbl2.Top = 60;
+            lbl2.Width = 120;
+
+            cmbTarget.Left = 140;
+            cmbTarget.Top = 60;
+            cmbTarget.Width = 220;
+            cmbTarget.Items.AddRange(new string[] { "notepad", "cmd", "browser", "run", "focus", "continue", "comfyui" });
+            cmbTarget.SelectedIndex = 0;
+
+            Label lbl3 = new Label();
+            lbl3.Text = "Content:";
+            lbl3.Left = 10;
+            lbl3.Top = 100;
+            lbl3.Width = 120;
+
+            txtContent.Left = 140;
+            txtContent.Top = 100;
+            txtContent.Width = 220;
+
+            Label lbl4 = new Label();
+            lbl4.Text = "Command:";
+            lbl4.Left = 10;
+            lbl4.Top = 140;
+            lbl4.Width = 120;
+
+            txtCommand.Left = 140;
+            txtCommand.Top = 140;
+            txtCommand.Width = 220;
+
+            btnOk.Text = "OK";
+            btnOk.Left = 140;
+            btnOk.Top = 200;
+            btnOk.Width = 80;
+            btnOk.DialogResult = DialogResult.OK;
+
+            btnCancel.Text = "Cancel";
+            btnCancel.Left = 240;
+            btnCancel.Top = 200;
+            btnCancel.Width = 80;
+            btnCancel.DialogResult = DialogResult.Cancel;
+
+            this.Controls.Add(lbl1);
+            this.Controls.Add(txtName);
+            this.Controls.Add(lbl2);
+            this.Controls.Add(cmbTarget);
+            this.Controls.Add(lbl3);
+            this.Controls.Add(txtContent);
+            this.Controls.Add(lbl4);
+            this.Controls.Add(txtCommand);
+            this.Controls.Add(btnOk);
+            this.Controls.Add(btnCancel);
+
+            this.AcceptButton = btnOk;
+            this.CancelButton = btnCancel;
+        }
+
+        public void SetValues(string name, string target, string content, string command)
+        {
+            txtName.Text = name;
+            cmbTarget.Text = target;
+            txtContent.Text = content;
+            txtCommand.Text = command;
+        }
+    }
+}

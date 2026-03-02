@@ -1,0 +1,13 @@
+settings:stay_on_top:false
+settings:start_with_windows:false
+settings:minimize_to_tray:true
+
+target:notepad
+Notepad Hello|Hello!|enter
+
+target:run
+Launch Notepad|notepad.exe
+
+target:focus
+Focus Test|text|enter
+target:Firestorm-Releasex64

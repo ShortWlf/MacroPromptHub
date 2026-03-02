@@ -1,0 +1,37 @@
+settings:stay_on_top:false
+settings:start_with_windows:false
+settings:minimize_to_tray:true
+
+# --- Hotkeys ---
+hotkey:CTRL+ALT+1|Notepad Hello
+hotkey:CTRL+ALT+2|CMD Dir
+hotkey:CTRL+ALT+3|Copilot Image Test
+
+# --- Notepad Tests ---
+target:notepad
+Notepad Hello|Hello from Macro Hub!|enter
+Notepad Multi-Line|Line 1\nLine 2\nLine 3|enter
+
+# --- CMD Tests ---
+target:cmd
+CMD Dir|dir|enter
+CMD Echo Test|echo Macro Hub Test|enter
+
+# --- Browser Tests (Copilot) ---
+target:browser
+Copilot Image Test|https://copilot.microsoft.com/?newchat|prompt:make an image of a neon dragon in synthwave style
+Copilot Text Test|https://copilot.microsoft.com/?newchat|prompt:write a short poem about retro neon cities
+
+# --- Continue Session ---
+target:continue
+Continue Last Session|continue the conversation
+
+# --- Run Apps ---
+target:run
+Launch Notepad|notepad.exe
+Launch CMD|cmd.exe
+
+# --- Focus Macros (current control) ---
+target:focus
+ComfyUI Positive|a beautiful neon dragon|enter
+ComfyUI Negative|low quality, blurry|enter

@@ -1,0 +1,10 @@
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\bin\Debug\MacroPromptHub.exe.config
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\bin\Debug\MacroPromptHub.exe
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\bin\Debug\MacroPromptHub.pdb
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.csproj.AssemblyReference.cache
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.Form1.resources
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.Properties.Resources.resources
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.csproj.GenerateResource.cache
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.csproj.CoreCompileInputs.cache
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.exe
+C:\Users\ShortNRetro\source\repos\MacroPromptHub\MacroPromptHub\obj\Debug\MacroPromptHub.pdb
